@@ -1,0 +1,23 @@
+# Python environments and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.env
+.env.*
+
+# Simulation artifacts
+logs/
+*.tlog
+*.tlog.raw
+*.BIN
+*.bin
+*.log
+mav.parm
+eeprom.bin
+
+# Editor and operating-system files
+.vscode/
+.idea/
+.DS_Store
