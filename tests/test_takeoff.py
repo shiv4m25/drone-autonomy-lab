@@ -4,8 +4,8 @@ from unittest.mock import Mock, patch
 
 from pymavlink import mavutil
 
-from command_utils import check_altitude
-from drone_connect import Drone
+from drone_autonomy_lab.checks import check_altitude
+from drone_autonomy_lab.vehicle import Drone
 
 
 class TakeoffTest(unittest.TestCase):
@@ -50,13 +50,13 @@ class TakeoffTest(unittest.TestCase):
 
     def test_missing_ack(self):
         self.vehicle.drone.recv_match.return_value = None
-        with patch('drone_connect.time.monotonic', side_effect=[0, 0, 1, 31]):
+        with patch('drone_autonomy_lab.vehicle.time.monotonic', side_effect=[0, 0, 1, 31]):
             with self.assertRaisesRegex(TimeoutError, 'takeoff acknowledgment'):
                 self.vehicle.takeoff(10)
 
     def test_ack_and_altitude_share_deadline(self):
         self.vehicle.drone.recv_match.side_effect = [self.ack(), self.message(relative_alt=1000)]
-        with patch('drone_connect.time.monotonic', side_effect=[0, 0, 20, 20, 21, 31]):
+        with patch('drone_autonomy_lab.vehicle.time.monotonic', side_effect=[0, 0, 20, 20, 21, 31]):
             with self.assertRaisesRegex(TimeoutError, 'takeoff altitude'):
                 self.vehicle.takeoff(10)
 

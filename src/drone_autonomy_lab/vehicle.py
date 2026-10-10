@@ -4,7 +4,7 @@ import time
 
 from pymavlink import mavutil
 
-from command_utils import check_ack, check_altitude, check_armed, check_mode
+from .checks import check_ack, check_altitude, check_armed, check_mode
 
 
 class Drone:
@@ -130,18 +130,3 @@ class Drone:
 
     def close(self):
         self.drone.close()
-
-
-def main():
-    drone = Drone()
-    try:
-        drone.set_mode("GUIDED")
-        drone.arm()
-        drone.takeoff(10)
-        drone.land()
-    finally:
-        drone.close()
-
-
-if __name__ == "__main__":
-    main()

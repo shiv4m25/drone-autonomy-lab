@@ -4,7 +4,8 @@ from unittest.mock import Mock, call, patch
 
 from pymavlink import mavutil
 
-from drone_connect import Drone, main
+from drone_autonomy_lab.missions.demo import main
+from drone_autonomy_lab.vehicle import Drone
 
 
 class LandTest(unittest.TestCase):
@@ -40,7 +41,7 @@ class LandTest(unittest.TestCase):
         for message in [self.heartbeat(), None]:
             with self.subTest(message=message):
                 self.vehicle.drone.recv_match.return_value = message
-                with patch('drone_connect.time.monotonic', side_effect=[0, 0, 1, 91]):
+                with patch('drone_autonomy_lab.vehicle.time.monotonic', side_effect=[0, 0, 1, 91]):
                     with self.assertRaisesRegex(TimeoutError, 'LAND mode and disarmed state'):
                         self.vehicle.land()
 
@@ -51,17 +52,17 @@ class LandTest(unittest.TestCase):
         self.vehicle.drone.set_mode.assert_not_called()
 
     def test_mission_order_and_cleanup(self):
-        with patch('drone_connect.Drone') as factory:
-            main()
+        with patch('drone_autonomy_lab.missions.demo.Drone') as factory:
+            main([])
             self.assertEqual(factory.return_value.method_calls, [
-                call.set_mode('GUIDED'), call.arm(), call.takeoff(10), call.land(), call.close(),
+                call.set_mode(mode='GUIDED'), call.arm(), call.takeoff(altitude_m=10), call.land(), call.close(),
             ])
 
     def test_landing_failure_still_closes_connection(self):
-        with patch('drone_connect.Drone') as factory:
+        with patch('drone_autonomy_lab.missions.demo.Drone') as factory:
             factory.return_value.land.side_effect = TimeoutError('landing timeout')
             with self.assertRaises(TimeoutError):
-                main()
+                main([])
             factory.return_value.close.assert_called_once()
 
 

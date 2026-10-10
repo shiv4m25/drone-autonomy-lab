@@ -1,2 +1,1 @@
--r requirements.txt
-flake8==7.4.1
+-e .[dev]

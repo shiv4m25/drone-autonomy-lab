@@ -21,3 +21,8 @@ eeprom.bin
 .vscode/
 .idea/
 .DS_Store
+
+# Python packaging artifacts
+build/
+dist/
+*.egg-info/

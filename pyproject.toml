@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "drone-autonomy-lab"
+version = "0.1.0"
+description = "ArduPilot SITL mission control and live telemetry learning project"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = ["pymavlink==2.4.50"]
+
+[project.optional-dependencies]
+dev = ["flake8==7.4.1"]
+
+[project.scripts]
+drone-mission = "drone_autonomy_lab.missions.demo:main"
+drone-telemetry = "drone_autonomy_lab.telemetry.monitor:main"
+
+[project.urls]
+Repository = "https://github.com/shiv4m25/drone-autonomy-lab"
+
+[tool.setuptools.packages.find]
+where = ["src"]
