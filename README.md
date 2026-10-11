@@ -11,15 +11,16 @@ may follow later.
 | MAVProxy takeoff, hover, movement, landing | Completed in SITL by the author |
 | Python GUIDED, arming, takeoff to 10 m, landing/disarming | Completed in SITL by the author |
 | Continuous telemetry monitor alongside the mission | Completed in SITL by the author |
-| Mission executor: validated steps, progress, failure/interruption tracking | Implemented and mock-tested |
+| Mission executor: validated steps, telemetry confirmation, progress/failure/interruption | Implemented; mocked and synthetic UDP tests passed |
+| One continuous telemetry receiver per connection | Implemented; freshness, source filtering, error/cleanup tests passed |
 | Package structure and command-line entry points | Current checkpoint; validated by installation and tests |
 | Coordinate planning, waypoint arrival, square mission | Next |
 | Automatic mission recovery and hardware flight | Future work |
 
 Prior SITL exercises were reported successful by the author; their flight logs
 are not included. This checkpoint's verification uses mocked vehicle connections
-and synthetic telemetry. The refactored flight cycle still needs a live SITL
-rerun. This project has not been validated on a physical aircraft.
+and synthetic telemetry. The package-structure checkpoint was subsequently confirmed in SITL by the
+author. The new receiver/executor separation still needs a live SITL rerun. This project has not been validated on a physical aircraft.
 
 ## Project structure
 
@@ -27,15 +28,16 @@ rerun. This project has not been validated on a physical aircraft.
 drone-autonomy-lab/
 ├── src/drone_autonomy_lab/
 │   ├── __init__.py
-│   ├── checks.py                 # ACK and observed-state checks
-│   ├── vehicle.py                # ArduPilot connection and vehicle operations
+│   ├── checks.py                 # ACK and observed-state predicates
+│   ├── vehicle.py                # Session lifecycle and sending-only operations
 │   ├── missions/
 │   │   ├── __init__.py
 │   │   ├── models.py             # MissionStep validation and MissionState
-│   │   ├── executor.py           # Ordered execution and progress tracking
+│   │   ├── executor.py           # Send, confirm with telemetry, track progress
 │   │   └── demo.py               # Explicit takeoff/landing plan and CLI
 │   └── telemetry/
 │       ├── __init__.py
+│       ├── receiver.py           # Continuous receive thread and observation waits
 │       ├── state.py              # Latest values, units, and reception ages
 │       └── monitor.py            # Receive loop and terminal display
 ├── tests/                        # Mocked vehicle and telemetry tests
@@ -52,11 +54,15 @@ and optional heading. The mission executor sequences explicit actions and record
 their completion. The vehicle interface encodes and sends MAVLink inputs.
 Telemetry independently observes vehicle state.
 
-The current vehicle methods still combine sending commands with waiting for
-telemetry confirmation. Separating those waits from the receiver is future work;
-this package organization establishes the boundaries for that change. There is
-no coordinate planner yet. A full architecture/sequence diagram is deferred until
-those components are implemented.
+`Drone` manages a connection and starts its `TelemetryReceiver`; vehicle action
+methods only send requests. The receiver is the only reader of that connection.
+It continuously updates the display state and retains a bounded observation
+history, including command ACKs. `MissionExecutor` sends each action and waits
+for the corresponding observations before advancing. The monitor on port 14561
+uses its own receiver; it is an independent process, not the mission's data source.
+
+There is no coordinate planner yet. A full architecture/sequence diagram is
+deferred until those components are implemented.
 
 ## Setup
 
@@ -103,6 +109,17 @@ In the project terminal with `.venv` activated:
 ```bash
 drone-mission
 ```
+
+You can also run the demo file directly with the installed project environment:
+
+```bash
+.venv/bin/python src/drone_autonomy_lab/missions/demo.py
+```
+
+The package must be installed in the interpreter you use. For VS Code's Run
+Python File action, select this project's `.venv/bin/python`. Relative-import
+errors indicate a package module was launched as a standalone file; the demo uses
+absolute package imports to support that launch style.
 
 The mission runs **GUIDED → arm → take off to 10 m → LAND → wait for disarming**.
 It requests landing immediately after the takeoff altitude threshold is reached.
@@ -156,9 +173,32 @@ is created. The executor checks that actions exist before running the plan.
 
 Its states are `READY`, `RUNNING`, `COMPLETED`, `FAILED`, and `INTERRUPTED`.
 `current_step`, `completed_steps`, and `error` provide execution progress.
-Vehicle methods return after confirmation or raise on error/timeout. Exceptions
-stop subsequent steps and retain the original cause. Use a new executor for a
-new mission; there is no automatic retry. The caller owns connection cleanup.
+Vehicle methods return after sending. The executor waits for ACK/state
+confirmation with one deadline per step. Exceptions stop subsequent steps and
+retain the original cause. Use a new executor for a new mission; there is no automatic retry. The caller owns connection cleanup.
+
+## Deconstructing takeoff
+
+For `MissionStep("takeoff", {"altitude_m": 10})`:
+
+1. The executor starts a 30-second deadline and marks the receiver's observation
+   sequence. Messages already recorded cannot confirm this new action.
+2. `Drone.takeoff(10)` sends `MAV_CMD_NAV_TAKEOFF` with altitude in parameter 7,
+   then returns. It does not receive an ACK or inspect altitude.
+3. The background receiver keeps receiving every message. It retains matching
+   autopilot observations, updates telemetry state, and wakes waiting code.
+4. The executor waits for command 22's ACK. `ACCEPTED` allows the altitude wait;
+   `IN_PROGRESS` continues waiting; a rejection fails the mission.
+5. The executor waits for `GLOBAL_POSITION_INT.relative_alt >= 9500` mm. ACK
+   and altitude share the original deadline. Recent altitude received after the
+   step's marker is retained even if it arrived before the ACK.
+6. Only then is takeoff added to `completed_steps`, allowing LAND to begin.
+
+`Condition.wait()` pauses the executor thread while the receiver continues to
+run. This replaces a blocking receive inside the vehicle action. You can inspect
+these responsibilities in [vehicle.py](src/drone_autonomy_lab/vehicle.py),
+[receiver.py](src/drone_autonomy_lab/telemetry/receiver.py), and
+[executor.py](src/drone_autonomy_lab/missions/executor.py).
 
 ## Tests
 
@@ -169,10 +209,13 @@ python -m unittest discover -s tests -v
 flake8 src tests
 ```
 
-The current suite contains 27 tests and sends no vehicle commands. It covers
+The current suite contains 39 tests and sends no vehicle commands. It covers
 unit conversions, unknown/stale telemetry, source filtering, acknowledgments,
-timeouts, takeoff/landing confirmation, executor ordering, interruption, and
-cleanup. Lint settings live in `.flake8`.
+timeouts, takeoff/landing confirmation, executor ordering, interruption,
+continuous receiving, observation ordering/freshness, receiver failures, bounded
+history overflow, and cleanup. A queue-backed peer covers the full mission; a
+separate synthetic localhost UDP smoke check passed with real MAVLink messages.
+Lint settings live in `.flake8`.
 
 Module execution is also supported after installation:
 
@@ -193,6 +236,14 @@ python -m drone_autonomy_lab.telemetry.monitor --help
 - Closing the connection does not land the vehicle. If a step fails or is
   interrupted, later steps do not run. Use `mode land` in MAVProxy and wait for
   disarming. Automatic recovery and command retries remain future work.
+- Completion waits accept observations recorded after the action marker and
+  received less than five seconds ago. The receiver retains up to 2048 matching
+  observations; overflow, receiver failure, or stop fails a wait explicitly.
+  The receiver locks onto the first non-GCS autopilot heartbeat's system/component.
+- An observation marker distinguishes locally recorded messages, not wire-level
+  command transactions. Delayed/queued ACKs for repeated identical commands are
+  still ambiguous; there are no automatic retries. Use one mission command sender
+  per vehicle. Missing fresh confirmation times out; it does not trigger recovery.
 - Reception age is measured locally; it does not establish network latency or
   whether queued data represents the vehicle's current state.
 - The monitor shows the latest battery ID and status-text chunk. It does not
@@ -202,7 +253,7 @@ python -m drone_autonomy_lab.telemetry.monitor --help
 
 ## Next milestones
 
-1. Separate mission confirmation from the vehicle's MAVLink receive loop.
+1. Validate the new receiver/executor separation in live SITL.
 2. Implement coordinate targets, arrival checks, and a complete square mission.
 3. Test link/position loss and define explicit mission recovery behavior.
 4. Develop piloting skills and select compatible hardware.

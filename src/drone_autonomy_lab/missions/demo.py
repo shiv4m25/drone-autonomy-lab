@@ -2,9 +2,9 @@
 """Run the current takeoff-and-landing demo against Copter SITL."""
 import argparse
 
-from ..vehicle import Drone
-from .executor import MissionExecutor
-from .models import MissionStep
+from drone_autonomy_lab.missions.executor import MissionExecutor
+from drone_autonomy_lab.missions.models import MissionStep
+from drone_autonomy_lab.vehicle import Drone
 
 
 def takeoff_land_mission(altitude_m=10):

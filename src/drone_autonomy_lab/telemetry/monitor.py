@@ -7,7 +7,7 @@ import time
 
 from pymavlink import mavutil
 
-from .state import TelemetryState
+from .receiver import TelemetryReceiver
 
 
 def positive_number(value):
@@ -18,22 +18,19 @@ def positive_number(value):
 
 
 def monitor(connection, refresh=1, stale_after=5, duration=None):
-    state = TelemetryState()
+    receiver = TelemetryReceiver(connection).start()
     started = time.monotonic()
-    next_display = started
     stop_at = started + duration if duration is not None else math.inf
-    while True:
-        now = time.monotonic()
-        if now >= stop_at:
-            return
-        if now >= next_display:
+    try:
+        while True:
+            now = time.monotonic()
+            if now >= stop_at:
+                return
             prefix = '\033[2J\033[H' if sys.stdout.isatty() else ''
-            print(prefix + state.render(now, stale_after), flush=True)
-            next_display = now + refresh
-        wait = min(0.2, max(0, next_display - now), stop_at - now)
-        message = connection.recv_match(blocking=True, timeout=wait)
-        if message is not None:
-            state.update(message, time.monotonic())
+            print(prefix + receiver.render(now, stale_after), flush=True)
+            time.sleep(min(refresh, stop_at - now))
+    finally:
+        receiver.close()
 
 
 def main():

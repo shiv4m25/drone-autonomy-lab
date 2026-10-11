@@ -97,15 +97,20 @@ class TelemetryTest(unittest.TestCase):
 
     def test_monitor_receives_without_sending(self):
         connection = Mock()
-        connection.recv_match.side_effect = [self.heartbeat(), None]
         with (
-            patch('drone_autonomy_lab.telemetry.monitor.time.monotonic', side_effect=[0, 0, 0.1, 1, 2]),
+            patch('drone_autonomy_lab.telemetry.monitor.TelemetryReceiver') as factory,
+            patch('drone_autonomy_lab.telemetry.monitor.time.monotonic', side_effect=[0, 0, 1, 2]),
+            patch('drone_autonomy_lab.telemetry.monitor.time.sleep'),
             redirect_stdout(io.StringIO()) as output,
         ):
+            receiver = factory.return_value.start.return_value
+            receiver.render.side_effect = ['Waiting for an autopilot heartbeat', 'mode=GUIDED']
             monitor(connection, duration=2)
         self.assertIn('Waiting for an autopilot heartbeat', output.getvalue())
         self.assertIn('mode=GUIDED', output.getvalue())
-        self.assertEqual(connection.recv_match.call_count, 2)
+        factory.assert_called_once_with(connection)
+        receiver.close.assert_called_once()
+        connection.recv_match.assert_not_called()
         self.assertEqual(connection.mav.method_calls, [])
         connection.set_mode.assert_not_called()
 

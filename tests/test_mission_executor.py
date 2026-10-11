@@ -9,11 +9,13 @@ from drone_autonomy_lab.missions.models import MissionState, MissionStep
 class MissionExecutorTest(unittest.TestCase):
     def setUp(self):
         self.vehicle = Mock()
+        self.telemetry = Mock()
+        self.telemetry.wait_for.return_value.relative_alt = 10000
         self.steps = (
             MissionStep('set_mode', {'mode': 'guided'}),
             MissionStep('arm'), MissionStep('takeoff', {'altitude_m': 10}), MissionStep('land'),
         )
-        self.executor = MissionExecutor(self.vehicle)
+        self.executor = MissionExecutor(self.vehicle, self.telemetry)
 
     def test_successful_sequence_and_progress(self):
         self.assertEqual(self.executor.run(self.steps), MissionState.COMPLETED)
@@ -26,7 +28,12 @@ class MissionExecutorTest(unittest.TestCase):
 
     def test_failure_stops_later_actions_and_preserves_original_error(self):
         error = TimeoutError('No altitude confirmation')
-        self.vehicle.takeoff.side_effect = error
+
+        def wait(message_type, check, **kwargs):
+            if message_type == 'GLOBAL_POSITION_INT':
+                raise error
+            return Mock()
+        self.telemetry.wait_for.side_effect = wait
         with self.assertRaises(TimeoutError) as caught:
             self.executor.run(self.steps)
         self.assertIs(caught.exception, error)
@@ -37,7 +44,11 @@ class MissionExecutorTest(unittest.TestCase):
         self.vehicle.land.assert_not_called()
 
     def test_interruption_is_reported_and_does_not_continue(self):
-        self.vehicle.arm.side_effect = KeyboardInterrupt()
+        def wait(message_type, check, **kwargs):
+            if kwargs['description'] == 'armed state':
+                raise KeyboardInterrupt()
+            return Mock()
+        self.telemetry.wait_for.side_effect = wait
         with self.assertRaises(KeyboardInterrupt):
             self.executor.run(self.steps)
         self.assertEqual(self.executor.state, MissionState.INTERRUPTED)
@@ -50,6 +61,23 @@ class MissionExecutorTest(unittest.TestCase):
             self.assertEqual(self.executor.completed_steps, [self.steps[0]])
         self.vehicle.arm.side_effect = confirm_arm
         self.executor.run(self.steps)
+
+    def test_progress_advances_only_after_observed_confirmation(self):
+        def wait(message_type, check, **kwargs):
+            if kwargs['description'] == 'armed state':
+                self.assertIs(self.executor.current_step, self.steps[1])
+                self.assertEqual(self.executor.completed_steps, [self.steps[0]])
+            return Mock(relative_alt=10000)
+        self.telemetry.wait_for.side_effect = wait
+        self.executor.run(self.steps)
+        self.assertEqual(len(self.executor.completed_steps), 4)
+
+    def test_wait_parameters_are_not_sent_to_vehicle(self):
+        self.executor.run([MissionStep('takeoff', {'altitude_m': 10, 'timeout': 7, 'tolerance_m': 0.2})])
+        self.vehicle.takeoff.assert_called_once_with(altitude_m=10)
+        predicate = self.telemetry.wait_for.call_args.args[1]
+        self.assertFalse(predicate(Mock(relative_alt=9799)))
+        self.assertTrue(predicate(Mock(relative_alt=9800)))
 
     def test_cannot_silently_replay_mission(self):
         self.executor.run(self.steps)
